@@ -144,7 +144,7 @@ export default function App() {
 
           {/* 06.5 — FEATURED THOUGHT / EDITORIAL THESIS */}
           <FeaturedThought
-            onExploreIdea={() => handleNavigate('notes', 'ai-agent-reliability-engineering')}
+            onExploreIdea={() => handleNavigate('notes', 'the-accountability-problem-with-ai-agents')}
           />
 
           {/* 07 — FROM X (Fragments of thinking / Micro-essays) */}

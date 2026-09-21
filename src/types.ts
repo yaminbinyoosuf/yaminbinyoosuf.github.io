@@ -5,10 +5,11 @@ export interface Article {
   formattedDate: string;
   category: 'ALL' | 'AI' | 'ENGINEERING' | 'SYSTEMS' | 'STARTUPS' | 'INFRASTRUCTURE' | 'INDIA' | 'BUILDING';
   excerpt: string;
+  summary?: string;
   readingTime: string;
   content: string[];
   tags: string[];
-  toc?: { id: string; text: string }[];
+  toc?: { id: string; text: string; paragraphIndex?: number }[];
   pullQuote?: string;
   codeSnippet?: {
     lang: string;

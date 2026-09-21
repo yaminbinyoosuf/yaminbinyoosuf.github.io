@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Article } from '../types';
-import { ArrowLeft, Clock, Calendar, Tag, Share2, Check, ArrowRight, BookOpen, Copy } from 'lucide-react';
+import { ArrowLeft, Clock, Calendar, Tag, Share2, Check, ArrowRight, BookOpen, Copy, ArrowUpRight } from 'lucide-react';
 
 interface ArticleViewProps {
   article: Article;
@@ -20,38 +20,49 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   const [scrollProgress, setScrollProgress] = useState(0);
   const [activeHeading, setActiveHeading] = useState<string>('');
   const [isScrolled, setIsScrolled] = useState(false);
+  const articleContentRef = useRef<HTMLElement | null>(null);
 
   // Scroll reading progress indicator
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
 
     const handleScroll = () => {
-      // Calculate progress relative to the main reading article container
-      const mainEl = document.querySelector('main');
-      if (mainEl) {
-        const rect = mainEl.getBoundingClientRect();
-        const mainTop = rect.top + window.scrollY;
-        const mainHeight = rect.height;
-        const startY = mainTop - 100;
-        const endY = mainTop + mainHeight - window.innerHeight * 0.75;
-        const currentY = window.scrollY;
+      const articleEl = articleContentRef.current || document.querySelector('main');
+      const currentY = window.scrollY;
 
-        if (currentY <= startY) {
-          setScrollProgress(0);
-        } else if (currentY >= endY) {
-          setScrollProgress(100);
+      if (currentY <= 0) {
+        setScrollProgress(0);
+      } else if (articleEl) {
+        const rect = articleEl.getBoundingClientRect();
+        const articleTop = rect.top + window.scrollY;
+        const articleHeight = rect.height;
+        const windowHeight = window.innerHeight;
+        // Total scrollable distance through the essay
+        const endY = articleTop + articleHeight - windowHeight * 0.7;
+
+        if (endY > 0) {
+          const pct = (currentY / endY) * 100;
+          // Check if scrolled near the bottom of the page
+          const atBottom = (windowHeight + currentY) >= (document.documentElement.scrollHeight - 30);
+          if (atBottom || currentY >= endY) {
+            setScrollProgress(100);
+          } else {
+            setScrollProgress(Math.min(100, Math.max(0, pct)));
+          }
         } else {
-          const pct = ((currentY - startY) / (endY - startY)) * 100;
-          setScrollProgress(Math.min(100, Math.max(0, pct)));
+          const totalScroll = document.documentElement.scrollTop || currentY;
+          const scrollHeight = document.documentElement.scrollHeight - windowHeight;
+          const scroll = scrollHeight > 0 ? (totalScroll / scrollHeight) * 100 : 0;
+          setScrollProgress(Math.min(100, Math.max(0, scroll)));
         }
       } else {
-        const totalScroll = document.documentElement.scrollTop || window.scrollY;
-        const windowHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-        const scroll = windowHeight > 0 ? (totalScroll / windowHeight) * 100 : 0;
+        const totalScroll = document.documentElement.scrollTop || currentY;
+        const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const scroll = scrollHeight > 0 ? (totalScroll / scrollHeight) * 100 : 0;
         setScrollProgress(Math.min(100, Math.max(0, scroll)));
       }
 
-      setIsScrolled(window.scrollY > 160);
+      setIsScrolled(currentY > 120);
 
       // Active TOC section detection
       if (article.toc) {
@@ -68,8 +79,12 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll, { passive: true });
     handleScroll();
-    return () => window.removeEventListener('scroll', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+    };
   }, [article]);
 
   const handleCopyLink = () => {
@@ -89,33 +104,124 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   const prevArticle = currentIndex > 0 ? allArticles[currentIndex - 1] : null;
   const nextArticle = currentIndex < allArticles.length - 1 ? allArticles[currentIndex + 1] : null;
 
-  // Related notes (same category or others)
-  const relatedNotes = allArticles
-    .filter(a => a.slug !== article.slug)
-    .slice(0, 2);
+  // Recommended Readings: Match 3 related articles based on tags, categories, and keyword scoring
+  const recommendedArticles = useMemo(() => {
+    const currentTags = new Set((article.tags || []).map(t => t.toLowerCase()));
+
+    const stopWords = new Set([
+      'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'about',
+      'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+      'to', 'from', 'up', 'down', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have',
+      'has', 'had', 'do', 'does', 'did', 'but', 'if', 'because', 'as', 'what', 'why', 'how',
+      'who', 'when', 'where', 'this', 'that', 'these', 'those', 'it', 'its', 'we', 'our', 'you',
+      'will', 'can', 'not', 'than', 'some', 'any'
+    ]);
+
+    const extractKeywords = (text: string) => {
+      return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, ' ')
+        .split(/[\s-]+/)
+        .filter(w => w.length > 2 && !stopWords.has(w));
+    };
+
+    const currentKeywords = new Set([
+      ...extractKeywords(article.title),
+      ...(article.tags || []).flatMap(t => extractKeywords(t)),
+      ...extractKeywords(article.category)
+    ]);
+
+    const candidates = allArticles.filter(a => a.slug !== article.slug);
+
+    const scored = candidates.map(cand => {
+      let score = 0;
+      const matchedTags: string[] = [];
+      const matchedKeywords: string[] = [];
+
+      // 1. Tag matching (+4 per exact tag)
+      if (cand.tags) {
+        for (const tag of cand.tags) {
+          if (currentTags.has(tag.toLowerCase())) {
+            score += 4;
+            matchedTags.push(tag);
+          }
+        }
+      }
+
+      // 2. Category matching (+2)
+      if (cand.category === article.category) {
+        score += 2;
+      }
+
+      // 3. Keyword matching in title and tags (+1 per unique keyword match)
+      const candKeywords = [
+        ...extractKeywords(cand.title),
+        ...(cand.tags || []).flatMap(t => extractKeywords(t)),
+        ...extractKeywords(cand.category)
+      ];
+
+      for (const kw of candKeywords) {
+        if (currentKeywords.has(kw) && !matchedKeywords.includes(kw)) {
+          score += 1;
+          matchedKeywords.push(kw);
+        }
+      }
+
+      return {
+        article: cand,
+        score,
+        matchedTags,
+        matchedKeywords
+      };
+    });
+
+    // Sort by highest relevance score, then recency
+    scored.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return new Date(b.article.date).getTime() - new Date(a.article.date).getTime();
+    });
+
+    return scored.slice(0, 3);
+  }, [article, allArticles]);
 
   return (
     <div className="w-full bg-[#0A0A0A] text-[#E5E5E5] min-h-screen">
       
-      {/* Subtle Scroll-Based Reading Progress Indicator (Fixed directly below sticky header) */}
+      {/* Subtle Horizontal Progress Bar at the top of the ArticleView component */}
       <div 
-        className="fixed top-14 left-0 right-0 z-50 pointer-events-none"
+        id="article-top-progress-bar"
+        className="fixed top-0 left-0 right-0 z-50 pointer-events-none"
         role="progressbar"
         aria-valuenow={Math.round(scrollProgress)}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label="Article reading progress"
       >
-        {/* Subtle Hairline Background Track */}
-        <div className="h-[2px] sm:h-[2.5px] w-full bg-[#161616]/90 backdrop-blur-sm overflow-hidden">
-          {/* Active Emerald Progress Fill with glowing trailing stop */}
+        {/* Subtle hairline background track */}
+        <div className="h-[2.5px] sm:h-[3px] w-full bg-[#181818]/90 overflow-hidden">
+          {/* Active Emerald Progress Fill with luminous leading edge */}
           <div
-            className="h-full bg-gradient-to-r from-[#1A9E6E] via-[#1EB37D] to-[#22C55E] transition-[width] duration-150 ease-out relative"
+            className="h-full bg-gradient-to-r from-[#1A9E6E] via-[#22C55E] to-[#34D399] transition-[width] duration-100 ease-out relative shadow-[0_0_8px_rgba(26,158,110,0.6)]"
             style={{ width: `${Math.min(100, Math.max(0, scrollProgress))}%` }}
           >
-            {/* Subtle luminous tip indicator */}
-            <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-r from-transparent to-white/40 shadow-[0_0_8px_rgba(26,158,110,0.8)]" />
+            <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-r from-transparent to-white/50" />
           </div>
+        </div>
+      </div>
+
+      {/* Floating Contextual Reading Sub-bar (Fixed directly below sticky header) */}
+      <div 
+        className="fixed top-14 left-0 right-0 z-40 pointer-events-none"
+        aria-hidden="true"
+      >
+        {/* Secondary hairline track along header bottom border */}
+        <div className="h-[1.5px] w-full bg-transparent overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-[#1A9E6E] via-[#22C55E] to-[#34D399] transition-[width] duration-100 ease-out"
+            style={{ width: `${Math.min(100, Math.max(0, scrollProgress))}%` }}
+          />
         </div>
 
         {/* Floating Contextual Reading Sub-bar (Smoothly fades in when reader scrolls into the essay) */}
@@ -267,7 +373,7 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
           </aside>
 
           {/* CENTER: Main Article Content Column (6 cols, max ~720px) */}
-          <main className="lg:col-span-6 order-1 lg:order-2 max-w-[740px]">
+          <main ref={articleContentRef} className="lg:col-span-6 order-1 lg:order-2 max-w-[740px]">
             
             {/* Main Title */}
             <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-[#FFFFFF] leading-[1.14]">
@@ -294,11 +400,15 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
             <div className="space-y-6 text-base sm:text-lg text-[#CCCCCC] leading-[1.75] font-normal">
               {article.content.map((paragraph, index) => {
                 // Check if this paragraph matches a TOC heading anchor
-                const tocItem = article.toc?.[index];
+                const tocItem = article.toc?.find(item =>
+                  item.paragraphIndex !== undefined
+                    ? item.paragraphIndex === index
+                    : (article.toc?.[index] === item && index > 0)
+                );
 
                 return (
                   <div key={index} className="space-y-4">
-                    {tocItem && index > 0 && (
+                    {tocItem && (
                       <h2
                         id={tocItem.id}
                         className="text-xl sm:text-2xl font-bold text-[#FFFFFF] tracking-tight pt-6 pb-1 font-sans border-b border-[#1E1E1E]"
@@ -381,31 +491,93 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
               )}
             </div>
 
-            {/* Related Notes */}
-            <div className="mt-12 pt-8 border-t border-[#1F1F1F]">
-              <span className="block font-mono-code text-xs uppercase tracking-widest text-[#555555] mb-4">
-                RELATED NOTES
-              </span>
-              <div className="space-y-3">
-                {relatedNotes.map((note) => (
+            {/* Recommended Readings */}
+            <section aria-labelledby="recommended-readings-heading" className="mt-14 pt-10 border-t border-[#1F1F1F]">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+                <div className="flex items-center gap-2.5">
+                  <BookOpen className="h-4 w-4 text-[#1A9E6E]" />
+                  <h3 id="recommended-readings-heading" className="font-mono-code text-xs uppercase tracking-widest text-[#FFFFFF] font-semibold">
+                    RECOMMENDED READINGS
+                  </h3>
+                </div>
+                <span className="font-mono-code text-[10px] text-[#666666] tracking-wider uppercase">
+                  MATCHED VIA TAGS & KEYWORD THEMES
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                {recommendedArticles.map(({ article: rec, matchedTags, matchedKeywords }) => (
                   <button
-                    key={note.slug}
-                    onClick={() => onSelectArticle(note.slug)}
-                    className="w-full text-left flex items-center justify-between p-3 border border-[#1A1A1A] hover:border-[#2E2E2E] bg-[#0D0D0D] hover:bg-[#121212] transition-colors"
+                    key={rec.slug}
+                    onClick={() => onSelectArticle(rec.slug)}
+                    className="group w-full text-left p-4 sm:p-5 border border-[#1E1E1E] hover:border-[#1A9E6E]/60 bg-[#0E0E0E] hover:bg-[#131313] transition-all focus:outline-none relative overflow-hidden"
                   >
-                    <div>
-                      <h4 className="text-sm font-medium text-[#D4D4D4] hover:text-white">
-                        {note.title}
-                      </h4>
-                      <span className="font-mono-code text-[11px] text-[#666666]">
-                        {note.category} · {note.readingTime}
-                      </span>
+                    {/* Active emerald left indicator on hover */}
+                    <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-[#1A9E6E] opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                    <div className="flex items-center justify-between gap-3 text-[11px] font-mono-code text-[#777777] mb-2.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="border border-[#2A2A2A] bg-[#161616] px-2 py-0.5 text-[#1A9E6E] font-medium uppercase text-[10px]">
+                          {rec.category}
+                        </span>
+                        <span>·</span>
+                        <span>{rec.readingTime}</span>
+                        <span>·</span>
+                        <span className="text-[#666666] hidden sm:inline">{rec.formattedDate}</span>
+                      </div>
+
+                      {matchedTags.length > 0 ? (
+                        <div className="hidden sm:flex items-center gap-1.5 text-[#1A9E6E] bg-[#1A9E6E]/10 border border-[#1A9E6E]/30 px-2 py-0.5 text-[10px]">
+                          <Tag className="h-2.5 w-2.5" />
+                          <span>{matchedTags[0]}</span>
+                          {matchedTags.length > 1 && <span>+{matchedTags.length - 1}</span>}
+                        </div>
+                      ) : matchedKeywords.length > 0 ? (
+                        <div className="hidden sm:flex items-center gap-1.5 text-[#888888] bg-[#161616] border border-[#262626] px-2 py-0.5 text-[10px]">
+                          <span>#{matchedKeywords[0]}</span>
+                        </div>
+                      ) : null}
                     </div>
-                    <ArrowRight className="h-4 w-4 text-[#444444]" />
+
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1.5 max-w-[90%] sm:max-w-[92%]">
+                        <h4 className="text-base sm:text-lg font-medium text-[#E5E5E5] group-hover:text-[#1A9E6E] transition-colors leading-snug">
+                          {rec.title}
+                        </h4>
+                        <p className="text-xs sm:text-sm text-[#888888] font-normal leading-relaxed line-clamp-2 font-sans">
+                          {rec.excerpt}
+                        </p>
+                      </div>
+
+                      <div className="shrink-0 pt-1 text-[#555555] group-hover:text-[#1A9E6E] group-hover:translate-x-1 transition-all">
+                        <ArrowRight className="h-4 w-4" />
+                      </div>
+                    </div>
+
+                    {/* Tag list footer */}
+                    {rec.tags && rec.tags.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-[#181818] flex items-center gap-2 flex-wrap">
+                        {rec.tags.slice(0, 3).map(tag => {
+                          const isMatched = matchedTags.some(mt => mt.toLowerCase() === tag.toLowerCase());
+                          return (
+                            <span
+                              key={tag}
+                              className={`text-[10px] font-mono-code px-1.5 py-0.5 ${
+                                isMatched
+                                  ? 'bg-[#182B22] text-[#1A9E6E] border border-[#1A9E6E]/40'
+                                  : 'bg-[#141414] text-[#666666] border border-[#202020]'
+                              }`}
+                            >
+                              #{tag}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
-            </div>
+            </section>
 
           </main>
 

@@ -156,7 +156,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }));
 
   const filteredArticles: SearchResult[] = articles
-    .filter(a => a.title.toLowerCase().includes(q) || a.excerpt.toLowerCase().includes(q) || a.category.toLowerCase().includes(q))
+    .filter(a => a.title.toLowerCase().includes(q) || a.excerpt.toLowerCase().includes(q) || (a.summary && a.summary.toLowerCase().includes(q)) || a.category.toLowerCase().includes(q))
     .map(a => ({
       id: `art-${a.slug}`,
       type: 'ARTICLE',
