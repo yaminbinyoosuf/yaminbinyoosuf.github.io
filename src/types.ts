@@ -1,13 +1,23 @@
+export type ArticleBlock =
+  | { type: 'paragraph'; text: string }
+  | { type: 'heading'; id: string; text: string }
+  | { type: 'list'; items: string[]; ordered?: boolean }
+  | { type: 'callout'; title: string; items: string[] }
+  | { type: 'quote'; text: string; citation?: string }
+  | { type: 'code'; code: string; caption?: string; lang?: string }
+  | { type: 'table'; headers: string[]; rows: string[][] };
+
 export interface Article {
   title: string;
   slug: string;
   date: string;
   formattedDate: string;
-  category: 'ALL' | 'AI' | 'ENGINEERING' | 'SYSTEMS' | 'STARTUPS' | 'INFRASTRUCTURE' | 'INDIA' | 'BUILDING';
+  category: 'ALL' | 'AI' | 'ENGINEERING' | 'SYSTEMS' | 'STARTUPS' | 'INFRASTRUCTURE' | 'INDIA' | 'BUILDING' | 'SOCIETY';
   excerpt: string;
   summary?: string;
   readingTime: string;
-  content: string[];
+  content?: string[];
+  body?: ArticleBlock[];
   tags: string[];
   toc?: { id: string; text: string; paragraphIndex?: number }[];
   pullQuote?: string;

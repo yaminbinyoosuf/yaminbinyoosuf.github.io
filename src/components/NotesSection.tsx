@@ -18,7 +18,8 @@ export const NotesSection: React.FC<NotesSectionProps> = ({ articles, onSelectAr
     'STARTUPS',
     'INFRASTRUCTURE',
     'INDIA',
-    'BUILDING'
+    'BUILDING',
+    'SOCIETY'
   ];
 
   const filteredArticles = selectedCategory === 'ALL'

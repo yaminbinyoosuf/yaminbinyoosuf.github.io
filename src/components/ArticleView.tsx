@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Article } from '../types';
+import { Article, ArticleBlock } from '../types';
 import { ArrowLeft, Clock, Calendar, Tag, Share2, Check, ArrowRight, BookOpen, Copy, ArrowUpRight } from 'lucide-react';
 
 interface ArticleViewProps {
@@ -8,6 +8,178 @@ interface ArticleViewProps {
   onBack: () => void;
   onSelectArticle: (slug: string) => void;
 }
+
+const renderInline = (text: string): React.ReactNode[] => {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
+
+  return parts.filter(part => part !== '').map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={index} className="font-semibold text-[#F5F5F3]">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={index}
+          className="border border-[#262626] bg-[#141414] px-1.5 py-0.5 font-mono-code text-[0.85em] text-[#D8D8D8]"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+};
+
+const ArticleCodeBlock: React.FC<{ block: Extract<ArticleBlock, { type: 'code' }> }> = ({ block }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(block.code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="border border-[#262626] bg-[#0E0E0E]">
+      <div className="flex items-center justify-between border-b border-[#222222] bg-[#141414] px-4 py-2 font-mono-code text-[11px] text-[#888888]">
+        <span>{block.caption || 'SYSTEM INTERFACE'}</span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 hover:text-white transition-colors focus:outline-none"
+        >
+          {copied ? <Check className="h-3 w-3 text-[#1A9E6E]" /> : <Copy className="h-3 w-3" />}
+          <span>{copied ? 'COPIED' : 'COPY'}</span>
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-4 font-mono-code text-xs text-[#D8D8D8] leading-relaxed">
+        <code>{block.code}</code>
+      </pre>
+    </div>
+  );
+};
+
+const ArticleBodyBlock: React.FC<{ block: ArticleBlock }> = ({ block }) => {
+  switch (block.type) {
+    case 'heading':
+      return (
+        <h2
+          id={block.id}
+          className="text-xl sm:text-2xl font-bold text-[#FFFFFF] tracking-tight pt-6 pb-1 font-sans border-b border-[#1E1E1E] scroll-mt-24"
+        >
+          {block.text}
+        </h2>
+      );
+
+    case 'paragraph':
+      return <p>{renderInline(block.text)}</p>;
+
+    case 'list':
+      if (block.ordered) {
+        return (
+          <ol className="list-decimal space-y-2.5 pl-5 marker:text-[#1A9E6E]">
+            {block.items.map((item, index) => (
+              <li key={index} className="pl-1">{renderInline(item)}</li>
+            ))}
+          </ol>
+        );
+      }
+
+      return (
+        <ul className="list-disc space-y-2.5 pl-5 marker:text-[#1A9E6E]">
+          {block.items.map((item, index) => (
+            <li key={index} className="pl-1">{renderInline(item)}</li>
+          ))}
+        </ul>
+      );
+
+    case 'callout':
+      return (
+        <aside className="border border-[#1A9E6E]/30 bg-[#101713] p-5 sm:p-6">
+          <div className="mb-3 flex items-center gap-2 font-mono-code text-[10px] uppercase tracking-[0.2em] text-[#1A9E6E]">
+            <span className="h-1.5 w-1.5 bg-[#1A9E6E]" />
+            {block.title}
+          </div>
+          <ul className="space-y-2.5">
+            {block.items.map((item, index) => (
+              <li
+                key={index}
+                className="relative pl-4 text-sm sm:text-[15px] leading-relaxed text-[#B8B8B8]"
+              >
+                <span className="absolute left-0 top-[0.62em] h-[1px] w-2 bg-[#1A9E6E]" />
+                {renderInline(item)}
+              </li>
+            ))}
+          </ul>
+        </aside>
+      );
+
+    case 'quote':
+      return (
+        <blockquote className="border-l-2 border-[#1A9E6E] bg-[#121212]/60 py-4 pl-5 pr-4">
+          <p className="font-editorial text-lg sm:text-xl italic leading-relaxed text-[#EDEDED]">
+            {renderInline(block.text)}
+          </p>
+          {block.citation && (
+            <cite className="mt-3 block font-mono-code text-[10px] uppercase tracking-wider not-italic text-[#666666]">
+              {block.citation}
+            </cite>
+          )}
+        </blockquote>
+      );
+
+    case 'code':
+      return <ArticleCodeBlock block={block} />;
+
+    case 'table':
+      return (
+        <div className="overflow-x-auto border border-[#262626]">
+          <table className="w-full min-w-[540px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="bg-[#141414]">
+                {block.headers.map((header, index) => (
+                  <th
+                    key={index}
+                    className="border-b border-[#262626] px-4 py-3 font-mono-code text-[10px] uppercase tracking-widest text-[#1A9E6E]"
+                  >
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1C1C1C]">
+              {block.rows.map((row, rowIndex) => (
+                <tr key={rowIndex} className="align-top">
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={cellIndex}
+                      className={`px-4 py-3 text-sm leading-relaxed ${
+                        cellIndex === 0 ? 'text-[#D6D6D6]' : 'text-[#999999]'
+                      }`}
+                    >
+                      {renderInline(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+
+    default:
+      return null;
+  }
+};
 
 export const ArticleView: React.FC<ArticleViewProps> = ({
   article,
@@ -398,28 +570,34 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
 
             {/* Article Content Paragraphs */}
             <div className="space-y-6 text-base sm:text-lg text-[#CCCCCC] leading-[1.75] font-normal">
-              {article.content.map((paragraph, index) => {
-                // Check if this paragraph matches a TOC heading anchor
-                const tocItem = article.toc?.find(item =>
-                  item.paragraphIndex !== undefined
-                    ? item.paragraphIndex === index
-                    : (article.toc?.[index] === item && index > 0)
-                );
+              {article.body && article.body.length > 0 ? (
+                article.body.map((block, index) => (
+                  <ArticleBodyBlock key={index} block={block} />
+                ))
+              ) : (
+                (article.content ?? []).map((paragraph, index) => {
+                  // Check if this paragraph matches a TOC heading anchor
+                  const tocItem = article.toc?.find(item =>
+                    item.paragraphIndex !== undefined
+                      ? item.paragraphIndex === index
+                      : (article.toc?.[index] === item && index > 0)
+                  );
 
-                return (
-                  <div key={index} className="space-y-4">
-                    {tocItem && (
-                      <h2
-                        id={tocItem.id}
-                        className="text-xl sm:text-2xl font-bold text-[#FFFFFF] tracking-tight pt-6 pb-1 font-sans border-b border-[#1E1E1E]"
-                      >
-                        {tocItem.text}
-                      </h2>
-                    )}
-                    <p>{paragraph}</p>
-                  </div>
-                );
-              })}
+                  return (
+                    <div key={index} className="space-y-4">
+                      {tocItem && (
+                        <h2
+                          id={tocItem.id}
+                          className="text-xl sm:text-2xl font-bold text-[#FFFFFF] tracking-tight pt-6 pb-1 font-sans border-b border-[#1E1E1E] scroll-mt-24"
+                        >
+                          {tocItem.text}
+                        </h2>
+                      )}
+                      <p>{paragraph}</p>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             {/* Pull Quote */}
@@ -596,6 +774,13 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
                       <li key={item.id}>
                         <a
                           href={`#${item.id}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            const target = document.getElementById(item.id);
+                            if (target) {
+                              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                          }}
                           className={`block transition-colors py-0.5 leading-snug ${
                             isCurrent
                               ? 'text-[#1A9E6E] font-medium translate-x-1'
